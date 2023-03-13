@@ -43,9 +43,7 @@
 #include <utility>
 #include "math/hal/transform.h"
 
-extern "C" {
-#include <vkhel.h>
-}
+#include "vkhelwrapper.h"
 
 /**
  * @namespace intnatvkhel

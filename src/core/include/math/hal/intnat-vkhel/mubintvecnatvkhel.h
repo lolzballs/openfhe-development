@@ -41,16 +41,14 @@
 #include <string>
 #include <vector>
 
+#include "vkhelwrapper.h"
+
 #include "math/hal/intnat-vkhel/ubintnatvkhel.h"
 #include "math/hal/vector.h"
 
 #include "utils/inttypes.h"
 #include "utils/serializable.h"
 #include "utils/blockAllocator/xvector.h"
-
-extern "C" {
-#include <vkhel.h>
-}
 
 // the following should be set to 1 in order to have native vector use block
 // allocations then determine if you want dynamic or static allocations by
