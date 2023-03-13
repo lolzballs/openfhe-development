@@ -29,22 +29,36 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //==================================================================================
 
+/*
+  This file contains the main class for native integers
+ */
+
 //==================================================================================
-// This file is included only if WITH_INTEL_HEXL is set to ON in CMakeLists.txt
+// This file is included only if WITH_VKHEL is set to ON in CMakeLists.txt
 //==================================================================================
+#ifdef WITH_VKHEL
 
-#ifndef __NATIVEINTBACKEND_H__
-#define __NATIVEINTBACKEND_H__
+    #include "math/hal.h"
 
-#ifdef WITH_INTEL_HEXL
-    #include "math/hal/intnat-hexl/backendnathexl.h"
-    #include "math/hal/intnat-hexl/transformnathexl.h"
-#elif defined(WITH_VKHEL)
-    #include "math/hal/intnat-vkhel/backendnatvkhel.h"
-    #include "math/hal/intnat-vkhel/transformnatvkhel.h"
-#else
-    #include "math/hal/intnat/backendnat.h"
-    #include "math/hal/intnat/transformnat.h"
-#endif
+namespace intnatvkhel {
 
-#endif  // __NATIVEINTBACKEND_H__
+// STRINGS & STREAMS
+
+// helper template to stream vector contents provided T has an stream operator<<
+template <typename T>
+std::ostream& operator<<(std::ostream& os, const std::vector<T>& v) {
+    os << "[";
+    // for (const auto itr : v){
+    for (const auto& i : v) {
+        os << " " << i;
+    }
+    os << " ]";
+    return os;
+}
+
+// to stream internal representation
+template std::ostream& operator<< <uint64_t>(std::ostream& os, const std::vector<uint64_t>& v);
+
+}  // namespace intnatvkhel
+
+#endif  // WITH_VKHEL
