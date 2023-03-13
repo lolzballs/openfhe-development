@@ -29,22 +29,32 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //==================================================================================
 
-//==================================================================================
-// This file is included only if WITH_INTEL_HEXL is set to ON in CMakeLists.txt
-//==================================================================================
+/*
+  This file contains the definitions for the VKHEL accelerated native math backend
+ */
 
-#ifndef __NATIVEINTBACKEND_H__
-#define __NATIVEINTBACKEND_H__
+#ifndef SRC_CORE_INCLUDE_MATH_HAL_INTNATVKHEL_BACKENDNAT_H_
+#define SRC_CORE_INCLUDE_MATH_HAL_INTNATVKHEL_BACKENDNAT_H_
 
-#ifdef WITH_INTEL_HEXL
-    #include "math/hal/intnat-hexl/backendnathexl.h"
-    #include "math/hal/intnat-hexl/transformnathexl.h"
-#elif defined(WITH_VKHEL)
-    #include "math/hal/intnat-vkhel/backendnatvkhel.h"
-    #include "math/hal/intnat-vkhel/transformnatvkhel.h"
-#else
-    #include "math/hal/intnat/backendnat.h"
-    #include "math/hal/intnat/transformnat.h"
+#include "math/hal/intnat-vkhel/ubintnatvkhel.h"
+#include "math/hal/intnat-vkhel/mubintvecnatvkhel.h"
+#include "math/hal/intnat-vkhel/transformnatvkhel.h"
+
+#include "math/hal/basicint.h"
+
+#if NATIVEINT != 64
+    #error "Building with VKHEL optimizations requires NATIVE_SIZE == 64"
 #endif
 
-#endif  // __NATIVEINTBACKEND_H__
+namespace lbcrypto {
+
+using NativeInteger = intnatvkhel::NativeInteger;
+using NativeVector  = intnatvkhel::NativeVector;
+
+}  // namespace lbcrypto
+
+// Promote to global namespace
+using NativeInteger = lbcrypto::NativeInteger;
+using NativeVector  = lbcrypto::NativeVector;
+
+#endif /* SRC_CORE_INCLUDE_MATH_HAL_INTNATVKHEL_BACKENDNAT_H_ */
