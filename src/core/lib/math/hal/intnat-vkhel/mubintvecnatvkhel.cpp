@@ -49,38 +49,57 @@ namespace intnatvkhel {
 // CONSTRUCTORS
 
 template <class IntegerType>
-NativeVectorT<IntegerType>::NativeVectorT() {}
-
-template <class IntegerType>
-NativeVectorT<IntegerType>::NativeVectorT(usint length) {
-    this->m_data.resize(length);
+NativeVectorT<IntegerType>::NativeVectorT() : m_vkVector(nullptr), m_dirtyVulkan(false), m_dirtyHost(false) {
+    this->m_vkCtx = lbcrypto::VkhelCtxManager::getContext();
 }
 
 template <class IntegerType>
-NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modulus) {
+NativeVectorT<IntegerType>::NativeVectorT(usint length) : m_dirtyVulkan(false), m_dirtyHost(false) {
+    this->m_data.resize(length);
+    this->m_vkCtx    = lbcrypto::VkhelCtxManager::getContext();
+    this->m_vkVector = vkhel_vector_create(m_vkCtx.get(), length);
+}
+
+template <class IntegerType>
+NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modulus)
+    : m_dirtyVulkan(false), m_dirtyHost(false) {
     if (modulus.GetMSB() > MAX_MODULUS_SIZE) {
         OPENFHE_THROW(lbcrypto::not_available_error,
                       "NativeVectorT supports only modulus size <=  " + std::to_string(MAX_MODULUS_SIZE) + " bits");
     }
     this->SetModulus(modulus);
     this->m_data.resize(length);
+
+    this->m_vkCtx    = lbcrypto::VkhelCtxManager::getContext();
+    this->m_vkVector = vkhel_vector_create(m_vkCtx.get(), length);
 }
 
 template <class IntegerType>
-NativeVectorT<IntegerType>::NativeVectorT(const NativeVectorT& bigVector) {
-    m_modulus = bigVector.m_modulus;
-    m_data    = bigVector.m_data;
+NativeVectorT<IntegerType>::NativeVectorT(const NativeVectorT& bigVector) : m_dirtyVulkan(false), m_dirtyHost(false) {
+    // update host/vk vectors before we copy
+    bigVector.updateHost();
+    bigVector.updateVulkan();
+
+    m_modulus  = bigVector.m_modulus;
+    m_data     = bigVector.m_data;
+    m_vkCtx    = bigVector.m_vkCtx;
+    m_vkVector = vkhel_vector_dup(bigVector.m_vkVector);
 }
 
 template <class IntegerType>
-NativeVectorT<IntegerType>::NativeVectorT(NativeVectorT&& bigVector) {
-    m_data    = std::move(bigVector.m_data);
-    m_modulus = bigVector.m_modulus;
+NativeVectorT<IntegerType>::NativeVectorT(NativeVectorT&& bigVector)
+    : m_dirtyVulkan(bigVector.m_dirtyVulkan), m_dirtyHost(bigVector.m_dirtyHost) {
+    m_data               = std::move(bigVector.m_data);
+    m_modulus            = bigVector.m_modulus;
+    m_vkCtx              = std::move(bigVector.m_vkCtx);
+    m_vkVector           = bigVector.m_vkVector;
+    bigVector.m_vkVector = nullptr;
 }
 
 template <class IntegerType>
 NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modulus,
-                                          std::initializer_list<std::string> rhs) {
+                                          std::initializer_list<std::string> rhs)
+    : m_dirtyVulkan(false), m_dirtyHost(false) {
     this->SetModulus(modulus);
     this->m_data.resize(length);
     usint len = rhs.size();
@@ -92,11 +111,15 @@ NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modul
             m_data[i] = IntegerType(0);
         }
     }
+
+    this->m_vkCtx    = lbcrypto::VkhelCtxManager::getContext();
+    this->m_vkVector = vkhel_vector_create(m_vkCtx.get(), length);
+    this->updateVkVector();
 }
 
 template <class IntegerType>
-NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modulus,
-                                          std::initializer_list<uint64_t> rhs) {
+NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modulus, std::initializer_list<uint64_t> rhs)
+    : m_dirtyVulkan(false), m_dirtyHost(false) {
     this->SetModulus(modulus);
     this->m_data.resize(length);
     usint len = rhs.size();
@@ -108,16 +131,27 @@ NativeVectorT<IntegerType>::NativeVectorT(usint length, const IntegerType& modul
             m_data[i] = IntegerType(0);
         }
     }
+
+    this->m_vkCtx    = lbcrypto::VkhelCtxManager::getContext();
+    this->m_vkVector = vkhel_vector_create(m_vkCtx.get(), length);
+    this->updateVkVector();
 }
 
 template <class IntegerType>
-NativeVectorT<IntegerType>::~NativeVectorT() {}
+NativeVectorT<IntegerType>::~NativeVectorT() {
+    if (m_vkVector) {
+        vkhel_vector_destroy(m_vkVector);
+    }
+}
 
 // ASSIGNMENT OPERATORS
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::operator=(const NativeVectorT& rhs) {
     if (this != &rhs) {
+        rhs.updateHost();
+        rhs.updateVulkan();
+
         if (this->m_data.size() == rhs.m_data.size()) {
             for (usint i = 0; i < m_data.size(); i++) {
                 this->m_data[i] = rhs.m_data[i];
@@ -125,9 +159,24 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::operator=(const Na
         }
         else {
             m_data = rhs.m_data;
+
+            if (m_vkVector != nullptr) {
+                vkhel_vector_destroy(m_vkVector);
+                m_vkVector = nullptr;
+            }
         }
-        m_modulus = rhs.m_modulus;
+
+        if (m_vkVector != nullptr) {
+            // TODO: copy from rhs instead of reallocating
+            vkhel_vector_destroy(m_vkVector);
+        }
+        m_vkVector    = vkhel_vector_dup(rhs.m_vkVector);
+        m_vkCtx       = rhs.m_vkCtx;
+        m_modulus     = rhs.m_modulus;
+        m_dirtyVulkan = false;
+        m_dirtyHost   = false;
     }
+
     return *this;
 }
 
@@ -136,6 +185,16 @@ NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::operator=(NativeVectorT&
     if (this != &rhs) {
         m_data    = std::move(rhs.m_data);
         m_modulus = rhs.m_modulus;
+
+        m_vkCtx = std::move(rhs.m_vkCtx);
+        if (m_vkVector) {
+            vkhel_vector_destroy(m_vkVector);
+        }
+
+        m_vkVector     = rhs.m_vkVector;
+        rhs.m_vkVector = nullptr;
+        m_dirtyVulkan  = rhs.m_dirtyVulkan;
+        m_dirtyHost    = rhs.m_dirtyHost;
     }
     return *this;
 }
@@ -156,6 +215,7 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::operator=(std::ini
             m_data[i] = 0;
         }
     }
+    m_dirtyVulkan = true;
     return *this;
 }
 
@@ -175,6 +235,7 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::operator=(std::ini
             m_data[i] = 0;
         }
     }
+    m_dirtyVulkan = true;
     return *this;
 }
 
@@ -201,23 +262,20 @@ void NativeVectorT<IntegerType>::SetModulus(const IntegerType& value) {
  */
 template <class IntegerType>
 void NativeVectorT<IntegerType>::SwitchModulus(const IntegerType& newModulus) {
-    /*
+    updateVulkan();
     IntegerType oldModulus(this->m_modulus);
     IntegerType oldModulusByTwo(oldModulus >> 1);
     IntegerType diff((oldModulus > newModulus) ? (oldModulus - newModulus) : (newModulus - oldModulus));
 
     if (newModulus > oldModulus) {
-        uint64_t* op1 = reinterpret_cast<uint64_t*>(&m_data[0]);
-        intel::hexl::EltwiseCmpAdd(op1, op1, m_data.size(), intel::hexl::CMPINT::NLE, oldModulusByTwo.ConvertToInt(),
-                                   diff.ConvertToInt());
+        vkhel_vector_elemgtadd(this->m_vkVector, this->m_vkVector, oldModulusByTwo.ConvertToInt(), diff.ConvertToInt());
     }
     else {  // newModulus <= oldModulus
-        uint64_t* op1 = reinterpret_cast<uint64_t*>(&m_data[0]);
-        intel::hexl::EltwiseCmpSubMod(op1, op1, m_data.size(), newModulus.ConvertToInt(), intel::hexl::CMPINT::NLE,
-                                      oldModulusByTwo.ConvertToInt(), diff.ConvertToInt() % newModulus.ConvertToInt());
+        vkhel_vector_elemgtsub(this->m_vkVector, this->m_vkVector, oldModulusByTwo.ConvertToInt(),
+                               diff.ConvertToInt() % newModulus.ConvertToInt(), newModulus.ConvertToInt());
     }
     this->SetModulus(newModulus);
-	*/
+    m_dirtyHost = true;
 }
 
 template <class IntegerType>
@@ -229,41 +287,18 @@ const IntegerType& NativeVectorT<IntegerType>::GetModulus() const {
 
 template <class IntegerType>
 NativeVectorT<IntegerType> NativeVectorT<IntegerType>::Mod(const IntegerType& modulus) const {
-    if (modulus == 2) {
-        return this->ModByTwo();
-    }
-    else {
-        NativeVectorT ans(this->GetLength(), this->GetModulus());
-        IntegerType halfQ(this->GetModulus() >> 1);
-        for (size_t i = 0; i < ans.GetLength(); i++) {
-            if (this->m_data[i] > halfQ) {
-                ans[i] = this->m_data[i].ModSub(this->GetModulus(), modulus);
-            }
-            else {
-                ans[i] = this->m_data[i].Mod(modulus);
-            }
-        }
-        return ans;
-    }
+    NativeVectorT ans(*this);
+    vkhel_vector_elemmod(this->m_vkVector, ans.m_vkVector, modulus.ConvertToInt(), this->GetModulus().ConvertToInt());
+    ans.m_dirtyHost = true;
+    return ans;
 }
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModEq(const IntegerType& modulus) {
-    if (modulus == 2) {
-        return this->ModByTwoEq();
-    }
-    else {
-        IntegerType halfQ(this->GetModulus() >> 1);
-        for (size_t i = 0; i < this->GetLength(); i++) {
-            if (this->m_data[i] > halfQ) {
-                this->m_data[i].ModSubEq(this->GetModulus(), modulus);
-            }
-            else {
-                this->m_data[i].ModEq(modulus);
-            }
-        }
-        return *this;
-    }
+    updateVulkan();
+    vkhel_vector_elemmod(this->m_vkVector, this->m_vkVector, modulus.ConvertToInt(), this->GetModulus().ConvertToInt());
+    m_dirtyHost = true;
+    return *this;
 }
 
 template <class IntegerType>
@@ -274,9 +309,12 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModAdd(const IntegerType&
     if (bLocal > m_modulus) {
         bLocal.ModEq(modulus);
     }
+    ans.updateHost();
+    // TODO: replace with an vk elemadd kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         ans.m_data[i].ModAddFastEq(bLocal, modulus);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
@@ -287,9 +325,12 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModAddEq(const Int
     if (bLocal > m_modulus) {
         bLocal.ModEq(modulus);
     }
+    this->updateHost();
+    // TODO: replace with an vk elemadd kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModAddFastEq(bLocal, modulus);
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -300,7 +341,9 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModAddAtIndex(usint i, co
         OPENFHE_THROW(lbcrypto::math_error, errMsg);
     }
     NativeVectorT ans(*this);
+    ans.updateHost();
     ans.m_data[i].ModAddEq(b, this->m_modulus);
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
@@ -310,7 +353,9 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModAddAtIndexEq(us
         std::string errMsg = "ubintnat::ModAddAtIndex. Index is out of range. i = " + std::to_string(i);
         OPENFHE_THROW(lbcrypto::math_error, errMsg);
     }
+    this->updateHost();
     this->m_data[i].ModAddEq(b, this->m_modulus);
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -320,10 +365,13 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModAdd(const NativeVector
         OPENFHE_THROW(lbcrypto::math_error, "ModAdd called on NativeVectorT's with different parameters.");
     }
     NativeVectorT ans(*this);
+    b.updateHost();
     IntegerType modulus = this->m_modulus;
+    // TODO: replace with an vk elemadd kernel
     for (usint i = 0; i < ans.m_data.size(); i++) {
         ans.m_data[i].ModAddFastEq(b[i], modulus);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
@@ -333,26 +381,36 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModAddEq(const Nat
         OPENFHE_THROW(lbcrypto::math_error, "ModAddEq called on NativeVectorT's with different parameters.");
     }
     IntegerType modulus = this->m_modulus;
+    this->updateHost();
+    b.updateHost();
+    // TODO: replace with an vk elemadd kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModAddFastEq(b[i], modulus);
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
 template <class IntegerType>
 NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModSub(const IntegerType& b) const {
     NativeVectorT ans(*this);
+    ans.updateHost();
+    // TODO: replace with an vk elemsub kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         ans.m_data[i].ModSubEq(b, this->m_modulus);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModSubEq(const IntegerType& b) {
+    this->updateHost();
+    // TODO: replace with an vk elemsub kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModSubEq(b, this->m_modulus);
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -362,9 +420,12 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModSub(const NativeVector
         OPENFHE_THROW(lbcrypto::math_error, "ModSub called on NativeVectorT's with different parameters.");
     }
     NativeVectorT ans(*this);
+    b.updateHost();
+    // TODO: replace with an vk elemsub kernel
     for (usint i = 0; i < ans.m_data.size(); i++) {
         ans.m_data[i].ModSubFastEq(b.m_data[i], this->m_modulus);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
@@ -373,9 +434,13 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModSubEq(const Nat
     if ((this->m_data.size() != b.m_data.size()) || this->m_modulus != b.m_modulus) {
         OPENFHE_THROW(lbcrypto::math_error, "ModSubEq called on NativeVectorT's with different parameters.");
     }
+    this->updateHost();
+    b.updateHost();
+    // TODO: replace with an vk elemsub kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModSubFastEq(b.m_data[i], this->m_modulus);
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -388,9 +453,12 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModMul(const IntegerType&
         bLocal.ModEq(modulus);
     }
     IntegerType bPrec = bLocal.PrepModMulConst(modulus);
+    ans.updateHost();
+    // TODO: replace with an vk_elemmul kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         ans.m_data[i].ModMulFastConstEq(bLocal, modulus, bPrec);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
@@ -402,9 +470,12 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModMulEq(const Int
         bLocal.ModEq(modulus);
     }
     IntegerType bPrec = bLocal.PrepModMulConst(modulus);
+    this->updateHost();
+    // TODO: replace with an vk_elemmul kernel
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModMulFastConstEq(bLocal, modulus, bPrec);
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -414,12 +485,10 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModMul(const NativeVector
         OPENFHE_THROW(lbcrypto::math_error, "ModMul called on NativeVectorT's with different parameters.");
     }
     NativeVectorT ans(*this);
+    b.updateVulkan();
 
-    /*
-    uint64_t* ans_data_ptr     = reinterpret_cast<uint64_t*>(&ans.m_data[0]);
-    const uint64_t* b_data_ptr = reinterpret_cast<const uint64_t*>(&b[0]);
-    intel::hexl::EltwiseMultMod(ans_data_ptr, ans_data_ptr, b_data_ptr, m_data.size(), m_modulus.ConvertToInt(), 1);
-	*/
+    vkhel_vector_elemmul(this->m_vkVector, b.m_vkVector, ans.m_vkVector, m_modulus.ConvertToInt());
+    ans.m_dirtyHost = true;
     return ans;
 }
 
@@ -428,77 +497,65 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModMulEq(const Nat
     if ((this->m_data.size() != b.m_data.size()) || this->m_modulus != b.m_modulus) {
         OPENFHE_THROW(lbcrypto::math_error, "ModMulEq called on NativeVectorT's with different parameters.");
     }
+    this->updateVulkan();
+    b.updateVulkan();
 
-    /*
-    uint64_t* m_data_ptr       = reinterpret_cast<uint64_t*>(&m_data[0]);
-    const uint64_t* b_data_ptr = reinterpret_cast<const uint64_t*>(&b[0]);
-    intel::hexl::EltwiseMultMod(m_data_ptr, m_data_ptr, b_data_ptr, m_data.size(), m_modulus.ConvertToInt(), 1);
-	*/
+    vkhel_vector_elemmul(this->m_vkVector, b.m_vkVector, this->m_vkVector, m_modulus.ConvertToInt());
+    this->m_dirtyHost = true;
     return *this;
 }
 
 template <class IntegerType>
 NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModByTwo() const {
-    NativeVectorT ans(*this);
-    ans.ModByTwoEq();
-    return ans;
+    return this->Mod(2);
+}
+
+template <class IntegerType>
+const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModByTwoEq() {
+    return this->ModEq(2);
 }
 
 template <class IntegerType>
 NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModExp(const IntegerType& b) const {
     NativeVectorT ans(*this);
+    // TODO: replace with elemexp
     for (usint i = 0; i < this->m_data.size(); i++) {
         ans.m_data[i].ModExpEq(b, this->m_modulus);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModExpEq(const IntegerType& b) {
+    this->updateHost();
+    // TODO: replace with elemexp
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModExpEq(b, this->m_modulus);
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
 template <class IntegerType>
 NativeVectorT<IntegerType> NativeVectorT<IntegerType>::ModInverse() const {
     NativeVectorT ans(*this);
+    // TODO: replace with eleminv
     for (usint i = 0; i < this->m_data.size(); i++) {
         ans.m_data[i].ModInverseEq(this->m_modulus);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModInverseEq() {
+    this->updateHost();
+    // TODO: replace with eleminv
     for (usint i = 0; i < this->m_data.size(); i++) {
         this->m_data[i].ModInverseEq(this->m_modulus);
     }
-    return *this;
-}
-
-template <class IntegerType>
-const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::ModByTwoEq() {
-    IntegerType halfQ(this->GetModulus() >> 1);
-    for (size_t i = 0; i < this->GetLength(); i++) {
-        if (this->operator[](i) > halfQ) {
-            if (this->m_data[i].Mod(2) == 1) {
-                this->m_data[i] = IntegerType(0);
-            }
-            else {
-                this->m_data[i] = 1;
-            }
-        }
-        else {
-            if (this->m_data[i].Mod(2) == 1) {
-                this->m_data[i] = 1;
-            }
-            else {
-                this->m_data[i] = IntegerType(0);
-            }
-        }
-    }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -508,9 +565,12 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::MultWithOutMod(const Nati
         OPENFHE_THROW(lbcrypto::math_error, "ModMul called on NativeVectorT's with different parameters.");
     }
     NativeVectorT ans(*this);
+    b.updateHost();
+    // TODO: replace with elmmul (nomod)
     for (usint i = 0; i < ans.m_data.size(); i++) {
         ans.m_data[i].MulEq(b.m_data[i]);
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
@@ -519,6 +579,7 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::MultiplyAndRound(const In
                                                                         const IntegerType& q) const {
     NativeVectorT ans(*this);
     IntegerType halfQ(this->m_modulus >> 1);
+    // TODO: implement kernel for this
     for (usint i = 0; i < this->m_data.size(); i++) {
         if (ans.m_data[i] > halfQ) {
             IntegerType temp = this->m_modulus - ans.m_data[i];
@@ -529,13 +590,16 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::MultiplyAndRound(const In
             ans.m_data[i].ModEq(this->m_modulus);
         }
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::MultiplyAndRoundEq(const IntegerType& p,
                                                                                  const IntegerType& q) {
+    this->updateHost();
     IntegerType halfQ(this->m_modulus >> 1);
+    // TODO: implement kernel for this
     for (usint i = 0; i < this->m_data.size(); i++) {
         if (this->m_data[i] > halfQ) {
             IntegerType temp = this->m_modulus - this->m_data[i];
@@ -546,6 +610,7 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::MultiplyAndRoundEq
             this->ModEq(this->m_modulus);
         }
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -553,6 +618,7 @@ template <class IntegerType>
 NativeVectorT<IntegerType> NativeVectorT<IntegerType>::DivideAndRound(const IntegerType& q) const {
     NativeVectorT ans(*this);
     IntegerType halfQ(this->m_modulus >> 1);
+    // TODO: implement kernel for this
     for (usint i = 0; i < this->m_data.size(); i++) {
         if (ans.m_data[i] > halfQ) {
             IntegerType temp = this->m_modulus - ans.m_data[i];
@@ -562,12 +628,15 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::DivideAndRound(const Inte
             ans.m_data[i].DivideAndRoundEq(q);
         }
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 
 template <class IntegerType>
 const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::DivideAndRoundEq(const IntegerType& q) {
+    this->updateHost();
     IntegerType halfQ(this->m_modulus >> 1);
+    // TODO: implement kernel for this
     for (usint i = 0; i < this->m_data.size(); i++) {
         if (this->m_data[i] > halfQ) {
             IntegerType temp = this->m_modulus - this->m_data[i];
@@ -577,6 +646,7 @@ const NativeVectorT<IntegerType>& NativeVectorT<IntegerType>::DivideAndRoundEq(c
             this->m_data[i].DivideAndRoundEq(q);
         }
     }
+    this->m_dirtyVulkan = true;
     return *this;
 }
 
@@ -589,6 +659,7 @@ NativeVectorT<IntegerType> NativeVectorT<IntegerType>::GetDigitAtIndexForBase(us
     for (usint i = 0; i < this->m_data.size(); i++) {
         ans.m_data[i] = IntegerType(ans.m_data[i].GetDigitAtIndexForBase(index, base));
     }
+    ans.m_dirtyVulkan = true;
     return ans;
 }
 

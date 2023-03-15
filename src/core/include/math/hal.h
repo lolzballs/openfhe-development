@@ -67,6 +67,11 @@ template <typename VecType>
 using NatChineseRemainderTransformFTT = intnathexl::ChineseRemainderTransformFTTNat<VecType>;
 template <typename VecType>
 using NatChineseRemainderTransformArb = intnathexl::ChineseRemainderTransformArbNat<VecType>;
+#elif WITH_VKHEL
+template <typename VecType>
+using NatChineseRemainderTransformFTT = intnatvkhel::ChineseRemainderTransformFTTNat<VecType>;
+template <typename VecType>
+using NatChineseRemainderTransformArb = intnatvkhel::ChineseRemainderTransformArbNat<VecType>;
 #else
 template <typename VecType>
 using NatChineseRemainderTransformFTT = intnat::ChineseRemainderTransformFTTNat<VecType>;

@@ -575,6 +575,7 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverseInPla
         OPENFHE_THROW(lbcrypto::math_error, "element size must be equal to CyclotomicOrder / 2");
     }
 
+    /*
     IntType modulus = element->GetModulus();
 
     bool reCompute = false;
@@ -585,7 +586,6 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverseInPla
     }
 
     std::pair<uint64_t, uint64_t> key{element->GetLength(), modulus.ConvertToInt()};
-    /*
     intel::hexl::NTT* p_ntt;
     std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
     auto ntt_it = m_IntelNtt.find(key);
@@ -612,6 +612,7 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverse(cons
         return;
     }
 
+    /*
     if (!lbcrypto::IsPowerOfTwo(CycloOrder)) {
         OPENFHE_THROW(lbcrypto::math_error, "CyclotomicOrder is not a power of two");
     }
@@ -631,7 +632,6 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverse(cons
     }
 
     std::pair<uint64_t, uint64_t> key{element.GetLength(), modulus.ConvertToInt()};
-    /*
     intel::hexl::NTT* p_ntt;
     std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
     auto ntt_it = m_IntelNtt.find(key);
@@ -669,6 +669,7 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverseInP
         OPENFHE_THROW(lbcrypto::math_error, "element size must be equal to CyclotomicOrder / 2");
     }
 
+    /*
     IntType modulus = element->GetModulus();
 
     bool reCompute = false;
@@ -680,7 +681,6 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverseInP
 
     // XXX - jbates - -Werror=unused-variable
     //usint msb = lbcrypto::GetMSB64(CycloOrderHf - 1);
-    /*
     std::pair<uint64_t, uint64_t> key{element->GetLength(), modulus.ConvertToInt()};
     intel::hexl::NTT* p_ntt;
     std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
@@ -706,6 +706,7 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverse(co
         *result = element;
         return;
     }
+    /*
 
     if (!lbcrypto::IsPowerOfTwo(CycloOrder)) {
         OPENFHE_THROW(lbcrypto::math_error, "CyclotomicOrder is not a power of two");
@@ -731,7 +732,6 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverse(co
         (*result)[i] = element[i];
     }
 
-    /*
     // XXX - jbates - -Werror=unused-variable
     //usint msb = lbcrypto::GetMSB64(CycloOrderHf - 1);
     std::pair<uint64_t, uint64_t> key{element.GetLength(), modulus.ConvertToInt()};

@@ -196,6 +196,7 @@ public:
         for (size_t i = 1; i < GetLength(); ++i) {
             this->m_data[i] = 0;
         }
+        this->m_dirtyVulkan = true;
         return *this;
     }
 
@@ -211,6 +212,8 @@ public:
         if (!this->IndexCheck(i)) {
             OPENFHE_THROW(lbcrypto::math_error, "NativeVectorT index out of range");
         }
+        this->updateHost();
+        this->m_dirtyVulkan = true;  // TODO: find better way to do this
         return this->m_data[i];
     }
 
@@ -218,6 +221,7 @@ public:
         if (!this->IndexCheck(i)) {
             OPENFHE_THROW(lbcrypto::math_error, "NativeVectorT index out of range");
         }
+        this->updateHost();
         return this->m_data[i];
     }
 
@@ -227,10 +231,13 @@ public:
    * @return is the value at the index. return nullptr if invalid index.
    */
     IntegerType& operator[](size_t idx) {
+        this->updateHost();
+        this->m_dirtyVulkan = true;  // TODO: find better way of handling this
         return (this->m_data[idx]);
     }
 
     const IntegerType& operator[](size_t idx) const {
+        this->updateHost();
         return (this->m_data[idx]);
     }
 
@@ -530,6 +537,8 @@ public:
    */
     template <class IntegerType_c>
     friend std::ostream& operator<<(std::ostream& os, const NativeVectorT<IntegerType_c>& ptr_obj) {
+        ptr_obj.updateHost();
+
         auto len = ptr_obj.m_data.size();
         os << "[";
         for (usint i = 0; i < len; i++) {
@@ -545,6 +554,7 @@ public:
     template <class Archive>
     typename std::enable_if<!cereal::traits::is_text_archive<Archive>::value, void>::type save(
         Archive& ar, std::uint32_t const version) const {
+        this->updateHost();
         ::cereal::size_type size = m_data.size();
         ar(size);
         if (size > 0) {
@@ -556,6 +566,7 @@ public:
     template <class Archive>
     typename std::enable_if<cereal::traits::is_text_archive<Archive>::value, void>::type save(
         Archive& ar, std::uint32_t const version) const {
+        this->updateHost();
         ar(::cereal::make_nvp("v", m_data));
         ar(::cereal::make_nvp("m", m_modulus));
     }
@@ -578,7 +589,14 @@ public:
             }
             free(data);
         }
+
+        m_dirtyVulkan = true;
         ar(m_modulus);
+
+        if (m_vkVector) {
+            vkhel_vector_destroy(m_vkVector);
+        }
+        m_vkVector = vkhel_vector_create2(m_vkCtx.get(), size, false);
     }
 
     template <class Archive>
@@ -590,10 +608,41 @@ public:
         }
         ar(::cereal::make_nvp("v", m_data));
         ar(::cereal::make_nvp("m", m_modulus));
+        m_dirtyVulkan = true;
+
+        if (m_vkVector) {
+            vkhel_vector_destroy(m_vkVector);
+        }
+        m_vkVector = vkhel_vector_create2(m_vkCtx.get(), m_data.size(), false);
     }
 
     std::string SerializedObjectName() const {
         return "NativeVectorT";
+    }
+
+    void updateHost() const {
+        if (m_dirtyHost) {
+            updateHostVector();
+            m_dirtyHost = false;
+        }
+    }
+
+    void updateVulkan() const {
+        if (m_dirtyVulkan) {
+            updateVkVector();
+            m_dirtyVulkan = false;
+        }
+    }
+
+    vkhel_vector* getVulkanVector() {
+        updateVulkan();
+        m_dirtyHost = true;  // TODO: find better way of handling this
+        return m_vkVector;
+    }
+
+    const vkhel_vector* getVulkanVector() const {
+        updateVulkan();
+        return m_vkVector;
     }
 
     static uint32_t SerializedVersion() {
@@ -604,10 +653,15 @@ private:
     // m_data is a pointer to the vector
 
 #if BLOCK_VECTOR_ALLOCATION != 1
-    std::vector<IntegerType> m_data;
+    mutable std::vector<IntegerType> m_data;
 #else
     xvector<IntegerType> m_data;
 #endif
+    std::shared_ptr<vkhel_ctx> m_vkCtx;
+    vkhel_vector* m_vkVector;
+    mutable bool m_dirtyVulkan;
+    mutable bool m_dirtyHost;
+
     // m_modulus stores the internal modulus of the vector.
     IntegerType m_modulus = 0;
 
@@ -617,6 +671,18 @@ private:
             return false;
         }
         return true;
+    }
+
+    void updateVkVector() const {
+        const uint64_t* data = reinterpret_cast<const uint64_t*>(&m_data[0]);
+        vkhel_vector_copy_from_host(m_vkVector, data);
+    }
+
+    void updateHostVector() const {
+        void* data = nullptr;
+        vkhel_vector_map(m_vkVector, &data, sizeof(uint64_t) * GetLength());
+        memcpy(reinterpret_cast<uint64_t*>(&m_data[0]), data, GetLength() * sizeof(uint64_t));
+        vkhel_vector_unmap(m_vkVector);
     }
 };
 
