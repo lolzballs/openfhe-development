@@ -77,7 +77,7 @@ std::map<typename VecType::Integer, VecType>
 
 template <typename VecType>
 // N, modulus
-std::unordered_map<std::pair<uint64_t, uint64_t>, ntt_tables*, HashPair>
+std::unordered_map<std::pair<uint64_t, uint64_t>, lbcrypto::VkhelNTTTablesWrapper, HashPair>
     ChineseRemainderTransformFTTNat<VecType>::m_vkhelNTT;
 template <typename VecType>
 std::mutex ChineseRemainderTransformFTTNat<VecType>::m_mtxVkhelNTT;
@@ -575,7 +575,6 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverseInPla
         OPENFHE_THROW(lbcrypto::math_error, "element size must be equal to CyclotomicOrder / 2");
     }
 
-    /*
     IntType modulus = element->GetModulus();
 
     bool reCompute = false;
@@ -586,21 +585,21 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverseInPla
     }
 
     std::pair<uint64_t, uint64_t> key{element->GetLength(), modulus.ConvertToInt()};
-    intel::hexl::NTT* p_ntt;
-    std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
-    auto ntt_it = m_IntelNtt.find(key);
-    if (reCompute || ntt_it == m_IntelNtt.end()) {
-        intel::hexl::NTT ntt(element->GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
-        m_IntelNtt[key] = std::move(ntt);
-        ntt_it          = m_IntelNtt.find(key);
+    vkhel_ntt_tables* p_ntt;
+    std::unique_lock<std::mutex> lock(m_mtxVkhelNTT);
+    auto ntt_it = m_vkhelNTT.find(key);
+    if (reCompute || ntt_it == m_vkhelNTT.end()) {
+        vkhel_ntt_tables* ntt =
+            vkhel_ntt_tables_create(element->GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
+        m_vkhelNTT[key] = std::move(lbcrypto::VkhelNTTTablesWrapper(ntt, vkhel_ntt_tables_destroy));
+        ntt_it          = m_vkhelNTT.find(key);
     }
-    p_ntt = &ntt_it->second;
+    p_ntt = ntt_it->second.get();
     lock.unlock();
 
-    auto* data = reinterpret_cast<uint64_t*>(&element->at(0));
-    p_ntt->ComputeForward(data, data, 1, 1);
+    vkhel_vector* vec = element->getVulkanVector();
+    vkhel_vector_forward_transform(vec, vec, p_ntt);
     element->SetModulus(modulus);
-	*/
 }
 
 template <typename VecType>
@@ -612,7 +611,6 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverse(cons
         return;
     }
 
-    /*
     if (!lbcrypto::IsPowerOfTwo(CycloOrder)) {
         OPENFHE_THROW(lbcrypto::math_error, "CyclotomicOrder is not a power of two");
     }
@@ -632,22 +630,20 @@ void ChineseRemainderTransformFTTNat<VecType>::ForwardTransformToBitReverse(cons
     }
 
     std::pair<uint64_t, uint64_t> key{element.GetLength(), modulus.ConvertToInt()};
-    intel::hexl::NTT* p_ntt;
-    std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
-    auto ntt_it = m_IntelNtt.find(key);
-    if (reCompute || ntt_it == m_IntelNtt.end()) {
-        intel::hexl::NTT ntt(element.GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
-        m_IntelNtt[key] = std::move(ntt);
-        ntt_it          = m_IntelNtt.find(key);
+    vkhel_ntt_tables* p_ntt;
+    std::unique_lock<std::mutex> lock(m_mtxVkhelNTT);
+    auto ntt_it = m_vkhelNTT.find(key);
+    if (reCompute || ntt_it == m_vkhelNTT.end()) {
+        vkhel_ntt_tables* ntt =
+            vkhel_ntt_tables_create(element.GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
+        m_vkhelNTT[key] = std::move(lbcrypto::VkhelNTTTablesWrapper(ntt, vkhel_ntt_tables_destroy));
+        ntt_it          = m_vkhelNTT.find(key);
     }
-    p_ntt = &ntt_it->second;
+    p_ntt = ntt_it->second.get();
     lock.unlock();
 
-    const uint64_t* input = reinterpret_cast<const uint64_t*>(&element.at(0));
-    uint64_t* output      = reinterpret_cast<uint64_t*>(&result->at(0));
-    p_ntt->ComputeForward(output, input, 1, 1);
+    vkhel_vector_forward_transform(element.getVulkanVector(), result->getVulkanVector(), p_ntt);
     result->SetModulus(modulus);
-	*/
 
     return;
 }
@@ -669,7 +665,6 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverseInP
         OPENFHE_THROW(lbcrypto::math_error, "element size must be equal to CyclotomicOrder / 2");
     }
 
-    /*
     IntType modulus = element->GetModulus();
 
     bool reCompute = false;
@@ -679,23 +674,22 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverseInP
         reCompute = true;
     }
 
-    // XXX - jbates - -Werror=unused-variable
-    //usint msb = lbcrypto::GetMSB64(CycloOrderHf - 1);
     std::pair<uint64_t, uint64_t> key{element->GetLength(), modulus.ConvertToInt()};
-    intel::hexl::NTT* p_ntt;
-    std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
-    auto ntt_it = m_IntelNtt.find(key);
-    if (reCompute || ntt_it == m_IntelNtt.end()) {
-        intel::hexl::NTT ntt(element->GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
-        m_IntelNtt[key] = std::move(ntt);
-        ntt_it          = m_IntelNtt.find(key);
+    vkhel_ntt_tables* p_ntt;
+    std::unique_lock<std::mutex> lock(m_mtxVkhelNTT);
+    auto ntt_it = m_vkhelNTT.find(key);
+    if (reCompute || ntt_it == m_vkhelNTT.end()) {
+        vkhel_ntt_tables* ntt =
+            vkhel_ntt_tables_create(element->GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
+        m_vkhelNTT[key] = std::move(lbcrypto::VkhelNTTTablesWrapper(ntt, vkhel_ntt_tables_destroy));
+        ntt_it          = m_vkhelNTT.find(key);
     }
-    p_ntt = &ntt_it->second;
+    p_ntt = ntt_it->second.get();
     lock.unlock();
-    auto* data = reinterpret_cast<uint64_t*>(&element->at(0));
-    p_ntt->ComputeInverse(data, data, 1, 1);
+
+    vkhel_vector* vec = element->getVulkanVector();
+    vkhel_vector_inverse_transform(vec, vec, p_ntt);
     element->SetModulus(modulus);
-	*/
 }
 
 template <typename VecType>
@@ -706,7 +700,6 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverse(co
         *result = element;
         return;
     }
-    /*
 
     if (!lbcrypto::IsPowerOfTwo(CycloOrder)) {
         OPENFHE_THROW(lbcrypto::math_error, "CyclotomicOrder is not a power of two");
@@ -726,32 +719,21 @@ void ChineseRemainderTransformFTTNat<VecType>::InverseTransformFromBitReverse(co
         reCompute = true;
     }
 
-    usint n = element.GetLength();
-    result->SetModulus(element.GetModulus());
-    for (usint i = 0; i < n; i++) {
-        (*result)[i] = element[i];
-    }
-
-    // XXX - jbates - -Werror=unused-variable
-    //usint msb = lbcrypto::GetMSB64(CycloOrderHf - 1);
     std::pair<uint64_t, uint64_t> key{element.GetLength(), modulus.ConvertToInt()};
-    intel::hexl::NTT* p_ntt;
-    std::unique_lock<std::mutex> lock(m_mtxIntelNTT);
-    auto ntt_it = m_IntelNtt.find(key);
-    if (reCompute || ntt_it == m_IntelNtt.end()) {
-        intel::hexl::NTT ntt(element.GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
-        m_IntelNtt[key] = std::move(ntt);
-        ntt_it          = m_IntelNtt.find(key);
+    vkhel_ntt_tables* p_ntt;
+    std::unique_lock<std::mutex> lock(m_mtxVkhelNTT);
+    auto ntt_it = m_vkhelNTT.find(key);
+    if (reCompute || ntt_it == m_vkhelNTT.end()) {
+        vkhel_ntt_tables* ntt =
+            vkhel_ntt_tables_create(element.GetLength(), modulus.ConvertToInt(), rootOfUnity.ConvertToInt());
+        m_vkhelNTT[key] = std::move(lbcrypto::VkhelNTTTablesWrapper(ntt, vkhel_ntt_tables_destroy));
+        ntt_it          = m_vkhelNTT.find(key);
     }
-    p_ntt = &ntt_it->second;
+    p_ntt = ntt_it->second.get();
     lock.unlock();
-    auto* input      = reinterpret_cast<const uint64_t*>(&result->at(0));
-    uint64_t* output = reinterpret_cast<uint64_t*>(&result->at(0));
-    p_ntt->ComputeInverse(output, input, 1, 1);
-    result->SetModulus(modulus);
-	*/
 
-    return;
+    vkhel_vector_inverse_transform(element.getVulkanVector(), result->getVulkanVector(), p_ntt);
+    result->SetModulus(modulus);
 }
 
 template <typename VecType>
@@ -877,8 +859,8 @@ void BluesteinFFTNat<VecType>::PreComputeRootTableForNTT(usint cyclotoOrder,
         x                   = x.ModMul(rootInv, nttModulus);
     }
 
-    m_rootOfUnityTableByModulusRoot[nttModulusRoot]        = rootTable;
-    m_rootOfUnityInverseTableByModulusRoot[nttModulusRoot] = rootTableInverse;
+    m_rootOfUnityTableByModulusRoot[nttModulusRoot]        = std::move(rootTable);
+    m_rootOfUnityInverseTableByModulusRoot[nttModulusRoot] = std::move(rootTableInverse);
 }
 
 template <typename VecType>
@@ -893,7 +875,7 @@ void BluesteinFFTNat<VecType>::PreComputePowers(usint cycloOrder, const ModulusR
         auto val  = root.ModExp(IntType(iSqr), modulus);
         powers[i] = val;
     }
-    m_powersTableByModulusRoot[modulusRoot] = powers;
+    m_powersTableByModulusRoot[modulusRoot] = std::move(powers);
 }
 
 template <typename VecType>
@@ -924,7 +906,7 @@ void BluesteinFFTNat<VecType>::PreComputeRBTable(usint cycloOrder, const Modulus
 
     VecType RB(nttDim);
     NumberTheoreticTransformNat<VecType>().ForwardTransformIterative(Rb, rootTable, &RB);
-    m_RBTableByModulusRootPair[modulusRootPair] = RB;
+    m_RBTableByModulusRootPair[modulusRootPair] = std::move(RB);
 }
 
 template <typename VecType>

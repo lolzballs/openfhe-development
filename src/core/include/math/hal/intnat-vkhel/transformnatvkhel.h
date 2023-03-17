@@ -367,7 +367,7 @@ public:
     static std::map<IntType, VecType> m_rootOfUnityInversePreconReverseTableByModulus;
 
     // Key is <modulus, CycloOrderHalf>
-    static std::unordered_map<std::pair<uint64_t, uint64_t>, ntt_tables*, HashPair> m_vkhelNTT;
+    static std::unordered_map<std::pair<uint64_t, uint64_t>, lbcrypto::VkhelNTTTablesWrapper, HashPair> m_vkhelNTT;
     static std::mutex m_mtxVkhelNTT;
 };
 
